@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Create Task</title>
+</head>
+<body>
+    <h1>Create New Task</h1>
+    <form action="/create" method="post">
+        <label>Title:</label>
+        <input type="text" name="title" required>
+        <br>
+    <label>Completed:</label>
+    <!-- Set value to "true" so the form submits a valid boolean instead of "on" -->
+    <input type="checkbox" name="completed" value="true">
+        <br>
+        <button type="submit">Create</button>
+    </form>
+    <a href="/">Back to Task List</a>
+</body>
+</html>
