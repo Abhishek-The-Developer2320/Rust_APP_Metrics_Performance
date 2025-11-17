@@ -1,10 +1,10 @@
 use actix_web::{web, HttpResponse, Responder};
 use sqlx::SqlitePool;
 use tera::{Tera, Context};
-use sqlx::Row; // <-- Add this
+use sqlx::Row; 
+use std::time::Instant;
 
 use crate::models::Task;
-use serde_json::json;
 
 /// Show all tasks (index page)
 pub async fn index_html(
@@ -29,6 +29,8 @@ pub async fn index_html(
     HttpResponse::Ok().body(rendered)
 
 }
+
+
 
 /// Show form to create a new task
 pub async fn create_html_form(tmpl: web::Data<Tera>) -> impl Responder {
@@ -121,44 +123,31 @@ pub async fn delete_html(
         .finish()
 }
 
-/// Bulk create tasks from a JSON array. Returns created IDs.
+/// Bulk create: accept JSON array of tasks (title/completed optional) and insert them
 pub async fn bulk_create(
     db: web::Data<SqlitePool>,
     items: web::Json<Vec<Task>>,
 ) -> impl Responder {
-    let mut tx = db.begin().await.expect("Failed to begin transaction");
-    let mut ids = Vec::new();
-    for t in items.into_inner().into_iter() {
+    let mut created: i64 = 0;
+    for it in items.iter() {
         let res = sqlx::query("INSERT INTO task (title, completed) VALUES (?, ?)")
-            .bind(&t.title)
-            .bind(t.completed.unwrap_or(false))
-            .execute(&mut tx)
-            .await
-            .expect("Failed to insert task");
-        let id = res.last_insert_rowid();
-        ids.push(id);
+            .bind(&it.title)
+            .bind(it.completed.unwrap_or(false))
+            .execute(db.get_ref())
+            .await;
+        if res.is_ok() { created += 1; }
     }
-    tx.commit().await.expect("Failed to commit");
-    HttpResponse::Ok().json(json!({ "created": ids }))
+    HttpResponse::Ok().json(serde_json::json!({"created_count": created}))
 }
 
-/// Bulk read tasks. Optional query param `limit` to restrict number returned.
+/// Bulk read: return all tasks as JSON
 pub async fn bulk_read(
-    db: web::Data<SqlitePool>,
-    params: web::Query<std::collections::HashMap<String, String>>,
+    db: web::Data<SqlitePool>
 ) -> impl Responder {
-    let mut q = String::from("SELECT id, title, completed FROM task");
-    if let Some(limit) = params.get("limit") {
-        if let Ok(n) = limit.parse::<i64>() {
-            q.push_str(" LIMIT ");
-            q.push_str(&n.to_string());
-        }
-    }
-
-    let rows = sqlx::query(&q)
-        .fetch_all(db.get_ref())
-        .await
-        .expect("Failed to fetch tasks");
+    let rows = match sqlx::query("SELECT id, title, completed FROM task").fetch_all(db.get_ref()).await {
+        Ok(r) => r,
+        Err(e) => return HttpResponse::InternalServerError().body(format!("DB error: {}", e)),
+    };
 
     let tasks: Vec<Task> = rows.into_iter().map(|row| Task {
         id: Some(row.get("id")),
@@ -169,44 +158,42 @@ pub async fn bulk_read(
     HttpResponse::Ok().json(tasks)
 }
 
-/// Bulk update tasks. Accepts JSON array of Task objects with id set.
+/// Bulk update: accept JSON array of {id, title, completed} and update matching rows
 pub async fn bulk_update(
     db: web::Data<SqlitePool>,
     items: web::Json<Vec<Task>>,
 ) -> impl Responder {
-    let mut tx = db.begin().await.expect("Failed to begin transaction");
-    let mut updated = 0i64;
-    for t in items.into_inner().into_iter() {
-        if let Some(id) = t.id {
+    let mut updated: i64 = 0;
+    for it in items.iter() {
+        if let Some(id) = it.id {
             let res = sqlx::query("UPDATE task SET title = ?, completed = ? WHERE id = ?")
-                .bind(&t.title)
-                .bind(t.completed.unwrap_or(false))
+                .bind(&it.title)
+                .bind(it.completed.unwrap_or(false))
                 .bind(id)
-                .execute(&mut tx)
-                .await
-                .expect("Failed to update task");
-            updated += res.rows_affected() as i64;
+                .execute(db.get_ref())
+                .await;
+            if let Ok(r) = res {
+                if r.rows_affected() > 0 { updated += r.rows_affected() as i64; }
+            }
         }
     }
-    tx.commit().await.expect("Failed to commit");
-    HttpResponse::Ok().json(json!({ "updated": updated }))
+    HttpResponse::Ok().json(serde_json::json!({"updated": updated}))
 }
 
-/// Bulk delete tasks. Accepts JSON array of IDs.
+/// Bulk delete: accept JSON array of ids and delete them
 pub async fn bulk_delete(
     db: web::Data<SqlitePool>,
     ids: web::Json<Vec<i64>>,
 ) -> impl Responder {
-    let mut tx = db.begin().await.expect("Failed to begin transaction");
-    let mut deleted = 0i64;
-    for id in ids.into_inner().into_iter() {
+    let mut deleted: i64 = 0;
+    for id in ids.iter() {
         let res = sqlx::query("DELETE FROM task WHERE id = ?")
             .bind(id)
-            .execute(&mut tx)
-            .await
-            .expect("Failed to delete task");
-        deleted += res.rows_affected() as i64;
+            .execute(db.get_ref())
+            .await;
+        if let Ok(r) = res {
+            if r.rows_affected() > 0 { deleted += r.rows_affected() as i64; }
+        }
     }
-    tx.commit().await.expect("Failed to commit");
-    HttpResponse::Ok().json(json!({ "deleted": deleted }))
+    HttpResponse::Ok().json(serde_json::json!({"deleted": deleted}))
 }
