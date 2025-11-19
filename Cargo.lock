@@ -18,7 +18,6 @@ dependencies = [
  "tokio-util",
  "tracing",
 ]
-
 [[package]]
 name = "actix-http"
 version = "3.11.2"
